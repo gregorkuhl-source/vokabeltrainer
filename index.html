@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vokabeltrainer</title>
+<style>
+  :root {
+    --bg: #f5f7fb; --card: #ffffff; --text: #1d2433; --muted: #667085;
+    --accent: #3b6fd8; --ok: #2e9e5b; --bad: #d64545; --line: #e2e6ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141821; --card: #1d2330; --text: #e8ecf4; --muted: #9aa4b8;
+      --accent: #6b9bff; --ok: #3fbf78; --bad: #ff6b6b; --line: #2c3445;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141821; --card: #1d2330; --text: #e8ecf4; --muted: #9aa4b8;
+    --accent: #6b9bff; --ok: #3fbf78; --bad: #ff6b6b; --line: #2c3445;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; position: sticky; top: 0; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  nav { display: flex; gap: 6px; }
+  main { max-width: 680px; margin: 0 auto; padding: 16px; }
+  h2 { margin-top: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  .center { text-align: center; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  .word { font-size: 2.2rem; font-weight: 700; margin: 12px 0 8px; word-break: break-word; }
+  .trans { font-size: 1.4rem; color: var(--muted); margin: 8px 0 16px; }
+  button { font: inherit; border-radius: 10px; padding: 10px 16px; border: 1px solid transparent; cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  .primary { background: var(--accent); color: #fff; }
+  .secondary { background: transparent; color: var(--accent); border-color: var(--accent); }
+  .ghost { background: transparent; color: var(--muted); border-color: var(--line); }
+  .danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+  nav button { background: transparent; color: var(--text); border-color: var(--line); padding: 6px 12px; }
+  nav button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .actions { display: grid; gap: 10px; margin-top: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center; }
+  .stats b { display: block; font-size: 1.6rem; }
+  .stats span { color: var(--muted); font-size: .85rem; }
+  .choices { display: grid; gap: 10px; margin: 16px 0; }
+  .choice { background: var(--bg); color: var(--text); border-color: var(--line); text-align: left; font-size: 1.05rem; }
+  .choice.right { border-color: var(--ok); color: var(--ok); }
+  .choice.wrong { border-color: var(--bad); color: var(--bad); }
+  input, textarea, select { font: inherit; width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  label { display: block; margin-bottom: 12px; font-size: .95rem; }
+  .field-row { display: flex; gap: 8px; margin: 12px 0; }
+  .field-row input { flex: 1; font-size: 1.1rem; }
+  .feedback { padding: 12px; border-radius: 10px; margin: 12px 0; }
+  .feedback.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); }
+  .feedback.bad { background: color-mix(in srgb, var(--bad) 15%, transparent); }
+  .inline { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-bottom: 16px; }
+  .bar span { display: block; height: 100%; background: var(--accent); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .row.active b { color: var(--accent); }
+  .row-actions { display: flex; gap: 8px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  .warn { color: var(--bad); }
+  .plan li { margin-bottom: 8px; }
+  @media (max-width: 480px) { .word { font-size: 1.7rem; } .stats b { font-size: 1.3rem; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 Vokabeltrainer</h1>
+  <nav>
+    <button data-act="go" data-view="start">Start</button>
+    <button data-act="go" data-view="import">Import</button>
+    <button data-act="go" data-view="weeks">Wochen</button>
+  </nav>
+</header>
+<main id="main"></main>
+
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+// ---------- Konfiguration ----------
+const STORE_KEY = 'vokabeltrainer-v1';
+const PDF_WORKER = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+const INTERVALS = [0, 1, 2, 4, 7, 14]; // Tage bis zur nächsten Abfrage, je Stufe (0 = neu)
+const MAX_NEW = 10;                    // neue Wörter pro Lern-Einheit
+const STAGE_NAMES = ['neu', 'Stufe 1', 'Stufe 2', 'Stufe 3', 'Stufe 4', 'sicher'];
+
+// ---------- Zustand ----------
+let state = loadState();
+let view = 'start';
+let session = null;
+
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORE_KEY));
+    if (s && Array.isArray(s.weeks)) return s;
+  } catch (e) { /* noch kein gespeicherter Stand */ }
+  return { weeks: [], activeId: null };
+}
+
+function save() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  } catch (e) {
+    alert('Der Fortschritt konnte nicht gespeichert werden: ' + e.message);
+  }
+}
+
+// ---------- Hilfsfunktionen ----------
+const $ = sel => document.querySelector(sel);
+const pad = n => String(n).padStart(2, '0');
+const toDay = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const today = () => toDay(new Date());
+const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return toDay(d); };
+const formatDate = s => { const [, m, d] = s.split('-'); return `${d}.${m}.`; };
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function shuffle(list) {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function activeWeek() {
+  return state.weeks.find(w => w.id === state.activeId) || state.weeks[0] || null;
+}
+
+function currentWord() {
+  const week = state.weeks.find(w => w.id === session.week);
+  return week.words.find(w => w.id === session.items[session.i].wordId);
+}
+
+function speak(text) {
+  if (!('speechSynthesis' in window)) {
+    alert('Sprachausgabe wird von diesem Browser nicht unterstützt.');
+    return;
+  }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'en-GB';
+  u.rate = 0.9;
+  speechSynthesis.speak(u);
+}
+
+// ---------- Import: Text aus PDF oder Bild ----------
+async function pdfToText(file) {
+  if (!window.pdfjsLib) throw new Error('Die PDF-Bibliothek konnte nicht geladen werden. Bitte Internetverbindung prüfen.');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER;
+  const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  let text = '';
+  for (let p = 1; p <= doc.numPages; p++) {
+    const content = await (await doc.getPage(p)).getTextContent();
+    // Textstücke nach Zeile (y) gruppieren, innerhalb einer Zeile nach x sortieren
+    const rows = new Map();
+    for (const item of content.items) {
+      if (!item.str) continue;
+      const y = Math.round(item.transform[5]);
+      if (!rows.has(y)) rows.set(y, []);
+      rows.get(y).push(item);
+    }
+    for (const y of [...rows.keys()].sort((a, b) => b - a)) {
+      const items = rows.get(y).sort((a, b) => a.transform[4] - b.transform[4]);
+      let line = '';
+      let lastEnd = null;
+      for (const item of items) {
+        const x = item.transform[4];
+        if (lastEnd !== null && x - lastEnd > 15) line += '\t';          // großer Abstand = Spalte
+        else if (line && !line.endsWith('\t')) line += ' ';
+        line += item.str;
+        lastEnd = x + item.width;
+      }
+      text += line + '\n';
+    }
+  }
+  return text;
+}
+
+async function imageToText(file, status) {
+  if (!window.Tesseract) throw new Error('Die Texterkennung konnte nicht geladen werden. Bitte Internetverbindung prüfen.');
+  const worker = await Tesseract.createWorker('eng+deu', 1, {
+    logger: m => {
+      if (m.status === 'recognizing text') status.textContent = `Erkenne Text … ${Math.round(m.progress * 100)} %`;
+    }
+  });
+  try {
+    const { data } = await worker.recognize(file);
+    return data.text;
+  } finally {
+    await worker.terminate();
+  }
+}
+
+// Excel/CSV: erste Spalte = linke Seite, zweite Spalte = rechte Seite (wie im Prüffeld)
+function excelToText(data) {
+  if (!window.XLSX) throw new Error('Die Excel-Bibliothek konnte nicht geladen werden. Bitte Internetverbindung prüfen.');
+  const headerWords = /^(englisch|english|deutsch|german|vokabel|vokabeln|übersetzung|translation)$/i;
+  const wb = XLSX.read(data, { type: 'array' });
+  let text = '';
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, defval: '' });
+    for (const row of rows) {
+      const cells = row.map(c => String(c).trim()).filter(Boolean);
+      if (cells.length < 2) continue;
+      if (headerWords.test(cells[0]) && headerWords.test(cells[1])) continue; // Kopfzeile überspringen
+      text += cells[0] + '\t' + cells.slice(1).join(', ') + '\n';
+    }
+  }
+  return text;
+}
+
+async function handleFile(file) {
+  const status = $('#status');
+  status.textContent = `Lese „${file.name}“ …`;
+  try {
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    const isExcel = /\.(xlsx|xls|csv)$/i.test(file.name);
+    const text = isPdf ? await pdfToText(file)
+      : isExcel ? excelToText(await file.arrayBuffer())
+      : await imageToText(file, status);
+    const box = $('#text');
+    box.value = box.value.trim() ? box.value.trimEnd() + '\n' + text : text;
+    status.textContent = 'Text erkannt. Bitte kurz prüfen und korrigieren, dann „Vorschau“ klicken.';
+  } catch (err) {
+    status.textContent = 'Fehler: ' + err.message;
+  }
+}
+
+// Zeile = eine Vokabel. Trennzeichen: Tab, „–“, „—“, „-“, „:“ oder mehrere Leerzeichen.
+function parseVocab(text, leftIsGerman) {
+  const pairs = [];
+  const problems = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/^\s*\d+[.)]?\s+/, '').trim(); // Nummerierung entfernen
+    if (!line) continue;
+    const parts = line.split(/\t+|\s+[–—-]\s+|\s*:\s+|\s{2,}/).map(p => p.trim()).filter(Boolean);
+    if (parts.length < 2) { problems.push(line); continue; }
+    const left = parts[0];
+    const right = parts.slice(1).join(', ');
+    pairs.push(leftIsGerman ? { en: right, de: left } : { en: left, de: right });
+  }
+  return { pairs, problems };
+}
+
+function viewImport() {
+  return `<div class="card">
+    <h2>Neue Woche importieren</h2>
+    <label>Name der Woche<input id="wname" value="Woche ${new Date().toLocaleDateString('de-DE')}"></label>
+    <label>Auf der linken Seite steht
+      <select id="leftSide"><option value="en">Englisch</option><option value="de">Deutsch</option></select>
+    </label>
+    <label>Foto, PDF oder Excel-Datei (xlsx, xls, csv)<input type="file" id="file" accept="application/pdf,image/*,.xlsx,.xls,.csv"></label>
+    <p id="status" class="muted">Tipp: Foto von oben, gut beleuchtet und scharf. Mehrere Seiten nacheinander hochladen, der Text wird angehängt.</p>
+    <label>Text zum Prüfen. Eine Vokabel pro Zeile, z. B. <i>house – Haus</i>
+      <textarea id="text" rows="12"></textarea>
+    </label>
+    <div class="actions" style="grid-template-columns: 1fr 1fr">
+      <button class="secondary" data-act="preview">Vorschau</button>
+      <button class="primary" data-act="saveImport">Woche speichern</button>
+    </div>
+    <div id="preview"></div>
+  </div>`;
+}
+
+function previewImport() {
+  const { pairs, problems } = parseVocab($('#text').value, $('#leftSide').value === 'de');
+  $('#preview').innerHTML = `
+    <p><b>${pairs.length}</b> Vokabeln erkannt.</p>
+    ${problems.length ? `<p class="warn">Nicht erkannt (bitte im Text korrigieren):<br>${problems.map(p => esc(p)).join('<br>')}</p>` : ''}
+    <div class="table-wrap"><table>
+      <tr><th>Englisch</th><th>Deutsch</th></tr>
+      ${pairs.map(p => `<tr><td>${esc(p.en)}</td><td>${esc(p.de)}</td></tr>`).join('')}
+    </table></div>`;
+}
+
+function saveImport() {
+  const { pairs } = parseVocab($('#text').value, $('#leftSide').value === 'de');
+  if (!pairs.length) {
+    alert('Keine Vokabeln erkannt. Jede Zeile braucht ein englisches und ein deutsches Wort, getrennt durch Tab, „–“ oder „-“.');
+    return;
+  }
+  const name = $('#wname').value.trim() || 'Woche ' + today();
+  const week = {
+    id: uid(),
+    name,
+    created: today(),
+    words: pairs.map(p => ({ id: uid(), en: p.en, de: p.de, box: 0, due: today(), wrong: 0 }))
+  };
+  state.weeks.push(week);
+  state.activeId = week.id;
+  save();
+  view = 'start';
+  render();
+}
+
+// ---------- Wochen-Übersicht ----------
+function viewWeeks() {
+  if (!state.weeks.length) return `<div class="card"><p>Noch keine Woche angelegt.</p></div>`;
+  const aw = activeWeek();
+  const list = state.weeks.map(w => {
+    const learned = w.words.filter(x => x.box > 0).length;
+    return `<div class="row ${w.id === aw.id ? 'active' : ''}">
+      <div><b>${esc(w.name)}</b><div class="muted">${w.words.length} Vokabeln · ${learned} gelernt · angelegt ${formatDate(w.created)}</div></div>
+      <div class="row-actions">
+        <button class="secondary" data-act="open" data-id="${w.id}">Öffnen</button>
+        <button class="danger" data-act="del" data-id="${w.id}">Löschen</button>
+      </div>
+    </div>`;
+  }).join('');
+  const details = aw.words.map(w => `<tr>
+      <td>${esc(w.en)}</td><td>${esc(w.de)}</td>
+      <td>${STAGE_NAMES[w.box]}</td>
+      <td>${w.box === 0 ? '–' : (w.due <= today() ? 'heute' : formatDate(w.due))}</td>
+      <td>${w.wrong || 0}</td>
+    </tr>`).join('');
+  return `<div class="card"><h2>Wochen</h2>${list}</div>
+    <div class="card"><h2>${esc(aw.name)}: Details</h2>
+      <div class="table-wrap"><table>
+        <tr><th>Englisch</th><th>Deutsch</th><th>Stufe</th><th>Nächste Abfrage</th><th>Fehler</th></tr>
+        ${details}
+      </table></div>
+    </div>`;
+}
+
+function deleteWeek(id) {
+  const w = state.weeks.find(x => x.id === id);
+  if (!w || !confirm(`„${w.name}“ wirklich löschen? Der Lernfortschritt geht verloren.`)) return;
+  state.weeks = state.weeks.filter(x => x.id !== id);
+  if (state.activeId === id) state.activeId = state.weeks[0] ? state.weeks[0].id : null;
+  save();
+  render();
+}
+
+// ---------- Startseite ----------
+function viewStart() {
+  if (!state.weeks.length) {
+    return `<div class="card center">
+      <h2>Willkommen!</h2>
+      <p>Lade zuerst die Vokabeln einer Woche hoch, als PDF oder als Foto aus dem Buch.</p>
+      <button class="primary" data-act="go" data-view="import">Vokabeln importieren</button>
+    </div>`;
+  }
+  const week = activeWeek();
+  const t = today();
+  const newCount = week.words.filter(w => w.box === 0).length;
+  const dueCount = week.words.filter(w => w.box > 0 && w.due <= t).length;
+  const learned = week.words.filter(w => w.box > 0).length;
+  const weekSelect = `<label>Woche<select id="weekSel">${state.weeks.map(w =>
+    `<option value="${w.id}" ${w.id === week.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></label>`;
+  return `<div class="card">
+      ${weekSelect}
+      <div class="stats">
+        <div><b>${newCount}</b><span>noch neu</span></div>
+        <div><b>${dueCount}</b><span>heute fällig</span></div>
+        <div><b>${learned}/${week.words.length}</b><span>gelernt</span></div>
+      </div>
+      <div class="actions">
+        <button class="primary" data-act="session" data-type="learn" ${newCount ? '' : 'disabled'}>1. Neue Wörter lernen (${Math.min(newCount, MAX_NEW)})</button>
+        <button class="primary" data-act="session" data-type="quiz" ${dueCount ? '' : 'disabled'}>2. Abfragen (${dueCount})</button>
+        <button class="secondary" data-act="session" data-type="test" ${week.words.length ? '' : 'disabled'}>3. Wochentest (${week.words.length} Wörter)</button>
+      </div>
+      ${newCount === 0 && dueCount === 0 ? '<p class="muted center">Heute ist nichts fällig. Gut gemacht!</p>' : ''}
+    </div>
+    <div class="card plan">
+      <h3>So lernt ihr die Woche</h3>
+      <ol>
+        <li><b>Am ersten Tag:</b> Neue Wörter lernen. Jedes Wort anhören und laut nachsprechen.</li>
+        <li><b>In den folgenden Tagen:</b> Abfragen, sobald Wörter fällig sind. Wörter, die schwerfallen, kommen häufiger zurück.</li>
+        <li><b>Ende der Woche:</b> Wochentest. Falsche Wörter kommen danach wieder in die Abfragen.</li>
+      </ol>
+      <p class="muted">Der Fortschritt wird automatisch im Browser gespeichert.</p>
+    </div>`;
+}
+
+// ---------- Lern-Einheiten ----------
+// type: 'learn' (neue Wörter), 'quiz' (fällige Wörter), 'test' (ganze Woche)
+function startSession(type) {
+  const week = activeWeek();
+  const t = today();
+  let words;
+  if (type === 'learn') words = week.words.filter(w => w.box === 0).slice(0, MAX_NEW);
+  else if (type === 'quiz') words = week.words.filter(w => w.box > 0 && w.due <= t);
+  else words = week.words;
+  if (!words.length) return;
+
+  const items = type === 'learn'
+    ? words.map(w => ({ wordId: w.id, kind: 'learn', reverse: false }))
+    : shuffle(words).map(w => makeItem(week, w, type));
+  session = { type, week: week.id, items, i: 0, results: [], feedback: null };
+  view = 'session';
+  render();
+}
+
+function makeItem(week, word, type) {
+  const reverse = Math.random() < 0.5;          // true: Deutsch zeigen, Englisch antworten
+  const answer = reverse ? word.en : word.de;
+  const kind = type === 'quiz' && week.words.length >= 4 && Math.random() < 0.5 ? 'choice' : 'type';
+  const item = { wordId: word.id, kind, reverse, retry: false };
+  if (kind === 'choice') {
+    const others = [...new Set(week.words.filter(w => w.id !== word.id).map(w => reverse ? w.en : w.de))]
+      .filter(x => x !== answer);
+    item.options = shuffle([answer, ...shuffle(others).slice(0, 3)]);
+  }
+  return item;
+}
+
+function renderSession() {
+  const s = session;
+  if (s.i >= s.items.length) return renderSummary(s);
+  const item = s.items[s.i];
+  const word = currentWord();
+  const progress = `<div class="bar"><span style="width:${(s.i / s.items.length) * 100}%"></span></div>`;
+  const exit = `<p class="center"><button class="ghost" data-act="go" data-view="start">Abbrechen</button></p>`;
+
+  if (item.kind === 'learn') {
+    return `${progress}<div class="card center">
+        <p class="muted">Neues Wort ${s.i + 1} von ${s.items.length}</p>
+        <div class="word">${esc(word.en)}</div>
+        <button class="ghost" data-act="speak" data-speak="${esc(word.en)}">🔊 anhören</button>
+        <div class="trans">${esc(word.de)}</div>
+        <p class="muted">Sprich das Wort laut nach.</p>
+        <button class="primary" id="go" data-act="learned">Weiter</button>
+      </div>${exit}`;
+  }
+
+  const question = item.reverse ? word.de : word.en;
+  const solution = item.reverse ? word.en : word.de;
+  const fb = s.feedback;
+  const label = item.retry ? 'Wiederholung' : (s.type === 'test' ? 'Wochentest' : 'Abfrage');
+
+  let input;
+  if (item.kind === 'choice') {
+    input = `<div class="choices">${item.options.map(o => {
+      let cls = '';
+      if (fb && o === solution) cls = 'right';
+      else if (fb && o === fb.given) cls = 'wrong';
+      return `<button class="choice ${cls}" data-act="choose" data-value="${esc(o)}" ${fb ? 'disabled' : ''}>${esc(o)}</button>`;
+    }).join('')}</div>`;
+  } else {
+    input = `<form id="typeForm" class="field-row">
+        <input id="answer" autocomplete="off" autocapitalize="off" spellcheck="false"
+          placeholder="${item.reverse ? 'auf Englisch' : 'auf Deutsch'} …" ${fb ? 'disabled' : ''}>
+        <button class="primary" ${fb ? 'disabled' : ''}>Prüfen</button>
+      </form>`;
+  }
+
+  let feedback = '';
+  if (fb) {
+    feedback = `<div class="feedback ${fb.ok ? 'ok' : 'bad'}">
+        ${fb.ok ? (fb.typo ? 'Fast! Richtig geschrieben: ' : 'Richtig! ') : 'Leider nicht. Richtig ist: '}<b>${esc(solution)}</b>
+      </div>
+      <div class="inline">
+        <button class="ghost" data-act="speak" data-speak="${esc(word.en)}">🔊 anhören</button>
+        <button class="primary" id="go" data-act="next">Weiter</button>
+      </div>`;
+  }
+
+  return `${progress}<div class="card center">
+      <p class="muted">${label} · ${s.i + 1} von ${s.items.length}</p>
+      <div class="word">${esc(question)}</div>
+      ${!item.reverse && !fb ? `<button class="ghost" data-act="speak" data-speak="${esc(word.en)}">🔊 anhören</button>` : ''}
+      ${input}
+      ${feedback}
+    </div>${exit}`;
+}
+
+// Antwort prüfen: 'exact', 'typo' (1 Buchstabe daneben, zählt als richtig) oder false
+function matches(given, target) {
+  const g = normalize(given);
+  if (!g) return false;
+  const targets = [target, ...target.split(/[\/,;]/)].map(normalize).filter(Boolean);
+  if (targets.includes(g)) return 'exact';
+  if (g.length >= 5 && targets.some(t => editDistance(g, t) <= 1)) return 'typo';
+  return false;
+}
+
+function normalize(s) {
+  return s.toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/[.!?]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^to /, '');
+}
+
+function editDistance(a, b) {
+  const m = [];
+  for (let i = 0; i <= a.length; i++) m[i] = [i];
+  for (let j = 0; j <= b.length; j++) m[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      m[i][j] = Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+  }
+  return m[a.length][b.length];
+}
+
+// Fortschritt nach Leitner-Prinzip: richtig = nächste Stufe, falsch = zurück auf Stufe 1
+function updateProgress(word, ok) {
+  if (ok) {
+    word.box = Math.min(word.box + 1, INTERVALS.length - 1);
+    word.due = addDays(INTERVALS[word.box]);
+  } else {
+    word.box = 1;
+    word.due = today();
+    word.wrong = (word.wrong || 0) + 1;
+  }
+  save();
+}
+
+function answer(given) {
+  const s = session;
+  const item = s.items[s.i];
+  const word = currentWord();
+  const solution = item.reverse ? word.en : word.de;
+  const res = matches(given, solution);
+  const ok = res !== false;
+  if (!item.retry) {
+    s.results.push({ word, ok, given });
+    updateProgress(word, ok);
+    // Falsche Antwort in Abfragen kommt am Ende der Runde noch einmal als Schreibaufgabe
+    if (!ok && s.type === 'quiz') s.items.push({ ...item, kind: 'type', retry: true });
+  }
+  s.feedback = { ok, typo: res === 'typo', given };
+  render();
+}
+
+function markLearned() {
+  const word = currentWord();
+  word.box = 1;
+  word.due = today();
+  save();
+  session.i++;
+  render();
+}
+
+function nextItem() {
+  session.i++;
+  session.feedback = null;
+  render();
+}
+
+function renderSummary(s) {
+  let body;
+  if (s.type === 'learn') {
+    body = `<h2>Super!</h2>
+      <p>${s.items.length} neue Wörter gelernt.</p>
+      <p class="muted">Die erste Abfrage dazu gibt es unter „2. Abfragen“. Am besten gleich noch eine Runde.</p>`;
+  } else {
+    const ok = s.results.filter(r => r.ok).length;
+    const total = s.results.length;
+    const pct = total ? Math.round((ok / total) * 100) : 0;
+    const wrong = s.results.filter(r => !r.ok);
+    body = `<h2>${s.type === 'test' ? 'Wochentest' : 'Abfrage'} geschafft</h2>
+      <p><b>${ok} von ${total}</b> auf Anhieb richtig (${pct} %).</p>
+      ${wrong.length
+        ? `<h3>Noch üben:</h3><ul>${wrong.map(r => `<li><b>${esc(r.word.en)}</b> – ${esc(r.word.de)}</li>`).join('')}</ul>
+           <p class="muted">Diese Wörter kommen in den nächsten Abfragen wieder.</p>`
+        : '<p>Alles auf Anhieb richtig!</p>'}`;
+  }
+  return `<div class="card center">${body}
+      <button class="primary" data-act="go" data-view="start">Zur Startseite</button>
+    </div>`;
+}
+
+// ---------- Rendering und Ereignisse ----------
+function render() {
+  document.querySelectorAll('nav [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  const views = { start: viewStart, import: viewImport, weeks: viewWeeks, session: renderSession };
+  $('#main').innerHTML = views[view]();
+  if (view === 'session') {
+    const el = document.querySelector('#answer:not([disabled]), #go');
+    if (el) el.focus();
+  }
+}
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  const d = el.dataset;
+  switch (d.act) {
+    case 'go': session = null; view = d.view; render(); break;
+    case 'session': startSession(d.type); break;
+    case 'open': state.activeId = d.id; save(); session = null; view = 'start'; render(); break;
+    case 'del': deleteWeek(d.id); break;
+    case 'preview': previewImport(); break;
+    case 'saveImport': saveImport(); break;
+    case 'speak': speak(d.speak); break;
+    case 'learned': markLearned(); break;
+    case 'choose': answer(d.value); break;
+    case 'next': nextItem(); break;
+  }
+});
+
+document.addEventListener('submit', e => {
+  if (e.target.id !== 'typeForm') return;
+  e.preventDefault();
+  const value = $('#answer').value;
+  if (value.trim()) answer(value);
+});
+
+document.addEventListener('change', async e => {
+  if (e.target.id === 'weekSel') {
+    state.activeId = e.target.value;
+    save();
+    render();
+  }
+  if (e.target.id === 'file' && e.target.files[0]) {
+    await handleFile(e.target.files[0]);
+    e.target.value = '';
+  }
+});
+
+render();
+</script>
+</body>
+</html>
