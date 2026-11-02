@@ -205,7 +205,6 @@ async function imageToText(file, status) {
 // Excel/CSV: erste Spalte = linke Seite, zweite Spalte = rechte Seite (wie im Prüffeld)
 function excelToText(data) {
   if (!window.XLSX) throw new Error('Die Excel-Bibliothek konnte nicht geladen werden. Bitte Internetverbindung prüfen.');
-  const headerWords = /^(englisch|english|deutsch|german|vokabel|vokabeln|übersetzung|translation)$/i;
   const wb = XLSX.read(data, { type: 'array' });
   let text = '';
   for (const name of wb.SheetNames) {
@@ -213,7 +212,6 @@ function excelToText(data) {
     for (const row of rows) {
       const cells = row.map(c => String(c).trim()).filter(Boolean);
       if (cells.length < 2) continue;
-      if (headerWords.test(cells[0]) && headerWords.test(cells[1])) continue; // Kopfzeile überspringen
       text += cells[0] + '\t' + cells.slice(1).join(', ') + '\n';
     }
   }
@@ -237,6 +235,8 @@ async function handleFile(file) {
   }
 }
 
+const HEADER_WORDS = /^(englisch|english|deutsch|german|vokabel|vokabeln|übersetzung|translation)$/i;
+
 // Zeile = eine Vokabel. Trennzeichen: Tab, „–“, „—“, „-“, „:“ oder mehrere Leerzeichen.
 function parseVocab(text, leftIsGerman) {
   const pairs = [];
@@ -248,6 +248,7 @@ function parseVocab(text, leftIsGerman) {
     if (parts.length < 2) { problems.push(line); continue; }
     const left = parts[0];
     const right = parts.slice(1).join(', ');
+    if (HEADER_WORDS.test(left) && HEADER_WORDS.test(right)) continue; // Kopfzeile überspringen
     pairs.push(leftIsGerman ? { en: right, de: left } : { en: left, de: right });
   }
   return { pairs, problems };
@@ -336,6 +337,7 @@ function viewWeeks() {
 function deleteWeek(id) {
   const w = state.weeks.find(x => x.id === id);
   if (!w || !confirm(`„${w.name}“ wirklich löschen? Der Lernfortschritt geht verloren.`)) return;
+  if (w.central) (state.dismissed = state.dismissed || []).push(w.central); // nicht erneut automatisch laden
   state.weeks = state.weeks.filter(x => x.id !== id);
   if (state.activeId === id) state.activeId = state.weeks[0] ? state.weeks[0].id : null;
   save();
@@ -574,6 +576,51 @@ function renderSummary(s) {
     </div>`;
 }
 
+// ---------- Zentrale Wochen ----------
+// Dateien im Ordner „wochen“ des GitHub-Repositorys (xlsx, xls, csv, txt) werden beim Öffnen
+// automatisch als Woche übernommen. Der Dateiname ist der Wochenname, links steht Englisch.
+function csvToText(text) {
+  return text.split(/\r?\n/)
+    .map(l => l.includes(';') ? l.split(';').map(s => s.trim()).filter(Boolean).join('\t') : l)
+    .join('\n');
+}
+
+async function syncCentral() {
+  if (!location.hostname.endsWith('.github.io')) return false;
+  const owner = location.hostname.split('.')[0];
+  const repo = location.pathname.split('/')[1];
+  if (!repo) return false;
+  let changed = false;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/wochen`);
+    if (!res.ok) return false;
+    const files = (await res.json()).filter(f => f.type === 'file' && /\.(xlsx|xls|csv|txt)$/i.test(f.name));
+    state.dismissed = state.dismissed || [];
+    for (const f of files) {
+      if (state.dismissed.includes(f.name) || state.weeks.some(w => w.central === f.name)) continue;
+      const file = await fetch(`wochen/${encodeURIComponent(f.name)}`);
+      if (!file.ok) continue; // evtl. noch nicht veröffentlicht, beim nächsten Öffnen erneut versuchen
+      const text = /\.(xlsx|xls)$/i.test(f.name) ? excelToText(await file.arrayBuffer()) : csvToText(await file.text());
+      const { pairs } = parseVocab(text, false);
+      if (!pairs.length) continue;
+      const week = {
+        id: uid(),
+        name: f.name.replace(/\.[^.]+$/, ''),
+        central: f.name,
+        created: today(),
+        words: pairs.map(p => ({ id: uid(), en: p.en, de: p.de, box: 0, due: today(), wrong: 0 }))
+      };
+      state.weeks.push(week);
+      state.activeId = week.id;
+      changed = true;
+    }
+    if (changed) save();
+  } catch (e) {
+    console.warn('Zentrale Wochen konnten nicht geladen werden:', e);
+  }
+  return changed;
+}
+
 // ---------- Rendering und Ereignisse ----------
 function render() {
   document.querySelectorAll('nav [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === view));
@@ -623,6 +670,7 @@ document.addEventListener('change', async e => {
 });
 
 render();
+syncCentral().then(changed => { if (changed && view !== 'session') render(); });
 </script>
 </body>
 </html>
