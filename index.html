@@ -65,6 +65,17 @@
   th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
   .warn { color: var(--bad); }
   .plan li { margin-bottom: 8px; }
+  .level { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .xp { color: var(--accent); font-weight: 700; }
+  .xp.big { font-size: 1.5rem; margin: 8px 0; }
+  .news { margin: 4px 0; font-weight: 600; }
+  .combo { color: #e8801c; font-weight: 700; }
+  .pop { font-size: 3rem; animation: pop .6s ease-out; }
+  @keyframes pop { 0% { transform: scale(.3); opacity: 0; } 70% { transform: scale(1.25); } 100% { transform: scale(1); opacity: 1; } }
+  .badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+  .badge { border: 1px solid var(--line); border-radius: 12px; padding: 12px; text-align: center; display: grid; gap: 4px; }
+  .badge .icon { font-size: 2rem; }
+  .badge.locked { opacity: .45; }
   @media (max-width: 480px) { .word { font-size: 1.7rem; } .stats b { font-size: 1.3rem; } }
 </style>
 </head>
@@ -74,6 +85,7 @@
   <nav>
     <button data-act="go" data-view="start">Start</button>
     <button data-act="go" data-view="import">Import</button>
+    <button data-act="go" data-view="badges">Erfolge</button>
     <button data-act="go" data-view="weeks">Wochen</button>
   </nav>
 </header>
@@ -344,6 +356,111 @@ function deleteWeek(id) {
   render();
 }
 
+// ---------- Spielerische Elemente (XP, Level, Serie, Abzeichen) ----------
+const DAILY_GOAL = 20; // Fragen bzw. neue Wörter pro Tag
+const LEVEL_TITLES = ['Wort-Neuling', 'Vokabel-Entdecker', 'Wort-Sammler', 'Sprachtalent', 'Vokabel-Profi',
+  'Wortakrobat', 'Sprachheld', 'Wortmeister', 'Vokabel-Legende'];
+const levelOf = xp => Math.floor(Math.sqrt(xp / 40)) + 1;
+const xpForLevel = n => 40 * (n - 1) ** 2;
+const titleOf = lvl => LEVEL_TITLES[Math.min(lvl, LEVEL_TITLES.length) - 1];
+
+const BADGES = [
+  { id: 'first', icon: '🌱', name: 'Erster Schritt', desc: 'Das erste Wort gelernt', test: g => g.learned >= 1 },
+  { id: 'correct50', icon: '🎯', name: 'Treffsicher', desc: '50 richtige Antworten', test: g => g.correct >= 50 },
+  { id: 'correct200', icon: '🏹', name: 'Scharfschütze', desc: '200 richtige Antworten', test: g => g.correct >= 200 },
+  { id: 'combo10', icon: '🔥', name: 'Feuerserie', desc: '10 richtige Antworten in Folge', test: g => g.bestCombo >= 10 },
+  { id: 'goal', icon: '✅', name: 'Tagesziel', desc: 'Das Tagesziel erreicht', test: g => g.goalsReached >= 1 },
+  { id: 'streak3', icon: '📅', name: 'Dranbleiber', desc: '3 Tage in Folge gelernt', test: g => g.streak >= 3 },
+  { id: 'streak7', icon: '🏆', name: 'Wochenheld', desc: '7 Tage in Folge gelernt', test: g => g.streak >= 7 },
+  { id: 'perfect', icon: '💎', name: 'Fehlerfrei', desc: 'Abfrage oder Test mit mindestens 5 Wörtern komplett richtig', test: g => g.perfect >= 1 },
+  { id: 'level5', icon: '⭐', name: 'Level 5', desc: 'Level 5 erreicht', test: g => levelOf(g.xp) >= 5 }
+];
+
+function game() {
+  if (!state.game) {
+    state.game = { xp: 0, streak: 0, lastDay: null, dayCount: 0, bestCombo: 0, learned: 0, correct: 0, perfect: 0, goalsReached: 0, badges: [] };
+  }
+  return state.game;
+}
+
+// Punkte gutschreiben, Tagesserie und Tagesziel fortschreiben. Gibt neue Meldungen zurück.
+function gain(pts, countsForGoal = true) {
+  const g = game();
+  const t = today();
+  if (g.lastDay !== t) {
+    g.streak = g.lastDay === addDays(-1) ? g.streak + 1 : 1;
+    g.lastDay = t;
+    g.dayCount = 0;
+  }
+  const events = [];
+  const levelBefore = levelOf(g.xp);
+  g.xp += pts;
+  if (countsForGoal && ++g.dayCount === DAILY_GOAL) {
+    g.goalsReached++;
+    g.xp += 20;
+    pts += 20;
+    events.push('🎯 Tagesziel erreicht! +20 XP');
+  }
+  const lvl = levelOf(g.xp);
+  if (lvl > levelBefore) events.push(`⭐ Level ${lvl}: ${titleOf(lvl)}`);
+  for (const b of BADGES) {
+    if (!g.badges.includes(b.id) && b.test(g)) {
+      g.badges.push(b.id);
+      events.push(`${b.icon} Neues Abzeichen: ${b.name}`);
+    }
+  }
+  session.xp += pts;
+  session.news.push(...events);
+  save();
+  return events;
+}
+
+function finishSession() {
+  const s = session;
+  const g = game();
+  let bonus = 10;
+  if (s.results.length >= 5) {
+    const ok = s.results.filter(r => r.ok).length;
+    if (ok === s.results.length) { g.perfect++; bonus += 20; }
+    if (s.type === 'test' && ok / s.results.length >= 0.9) bonus += 25;
+  }
+  gain(bonus, false);
+}
+
+function gameCard() {
+  const g = game();
+  const lvl = levelOf(g.xp);
+  const from = xpForLevel(lvl);
+  const to = xpForLevel(lvl + 1);
+  const t = today();
+  const streak = g.lastDay === t || g.lastDay === addDays(-1) ? g.streak : 0;
+  const todayCount = g.lastDay === t ? g.dayCount : 0;
+  return `<div class="card">
+    <div class="level"><b>⭐ Level ${lvl}: ${titleOf(lvl)}</b><span class="muted">${g.xp} XP</span></div>
+    <div class="bar"><span style="width:${((g.xp - from) / (to - from)) * 100}%"></span></div>
+    <p class="muted">Noch ${to - g.xp} XP bis Level ${lvl + 1}</p>
+    <div class="stats">
+      <div><b>🔥 ${streak}</b><span>Tage in Folge</span></div>
+      <div><b>${Math.min(todayCount, DAILY_GOAL)}/${DAILY_GOAL}</b><span>Tagesziel</span></div>
+      <div><b>🏅 ${g.badges.length}/${BADGES.length}</b><span>Abzeichen</span></div>
+    </div>
+  </div>`;
+}
+
+function viewBadges() {
+  const g = game();
+  return `<div class="card"><h2>Erfolge</h2><div class="badge-grid">${BADGES.map(b => {
+    const got = g.badges.includes(b.id);
+    return `<div class="badge ${got ? '' : 'locked'}"><div class="icon">${got ? b.icon : '🔒'}</div><b>${b.name}</b><span class="muted">${b.desc}</span></div>`;
+  }).join('')}</div></div>`;
+}
+
+function rewards(s) {
+  const answered = s.results.length;
+  const good = s.type === 'learn' || (answered && s.results.filter(r => r.ok).length / answered >= 0.8);
+  return `${good ? '<div class="pop">🎉</div>' : ''}<p class="xp big">+${s.xp} XP</p>${s.news.map(n => `<p class="news">${esc(n)}</p>`).join('')}`;
+}
+
 // ---------- Startseite ----------
 function viewStart() {
   if (!state.weeks.length) {
@@ -360,7 +477,7 @@ function viewStart() {
   const learned = week.words.filter(w => w.box > 0).length;
   const weekSelect = `<label>Woche<select id="weekSel">${state.weeks.map(w =>
     `<option value="${w.id}" ${w.id === week.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></label>`;
-  return `<div class="card">
+  return `${gameCard()}<div class="card">
       ${weekSelect}
       <div class="stats">
         <div><b>${newCount}</b><span>noch neu</span></div>
@@ -399,7 +516,7 @@ function startSession(type) {
   const items = type === 'learn'
     ? words.map(w => ({ wordId: w.id, kind: 'learn', reverse: false }))
     : shuffle(words).map(w => makeItem(week, w, type));
-  session = { type, week: week.id, items, i: 0, results: [], feedback: null };
+  session = { type, week: week.id, items, i: 0, results: [], feedback: null, combo: 0, xp: 0, news: [] };
   view = 'session';
   render();
 }
@@ -461,6 +578,8 @@ function renderSession() {
   if (fb) {
     feedback = `<div class="feedback ${fb.ok ? 'ok' : 'bad'}">
         ${fb.ok ? (fb.typo ? 'Fast! Richtig geschrieben: ' : 'Richtig! ') : 'Leider nicht. Richtig ist: '}<b>${esc(solution)}</b>
+        ${fb.pts ? `<span class="xp">+${fb.pts} XP</span>` : ''}
+        ${fb.events.map(n => `<div class="news">${esc(n)}</div>`).join('')}
       </div>
       <div class="inline">
         <button class="ghost" data-act="speak" data-speak="${esc(word.en)}">🔊 anhören</button>
@@ -469,7 +588,7 @@ function renderSession() {
   }
 
   return `${progress}<div class="card center">
-      <p class="muted">${label} · ${s.i + 1} von ${s.items.length}</p>
+      <p class="muted">${label} · ${s.i + 1} von ${s.items.length}${s.combo >= 2 ? ` · <span class="combo">🔥 ${s.combo} in Folge</span>` : ''}</p>
       <div class="word">${esc(question)}</div>
       ${!item.reverse && !fb ? `<button class="ghost" data-act="speak" data-speak="${esc(word.en)}">🔊 anhören</button>` : ''}
       ${input}
@@ -528,13 +647,26 @@ function answer(given) {
   const solution = item.reverse ? word.en : word.de;
   const res = matches(given, solution);
   const ok = res !== false;
+  const g = game();
+  let pts = 0;
   if (!item.retry) {
     s.results.push({ word, ok, given });
     updateProgress(word, ok);
-    // Falsche Antwort in Abfragen kommt am Ende der Runde noch einmal als Schreibaufgabe
-    if (!ok && s.type === 'quiz') s.items.push({ ...item, kind: 'type', retry: true });
+    if (ok) {
+      s.combo++;
+      g.correct++;
+      g.bestCombo = Math.max(g.bestCombo, s.combo);
+      pts = 10 + (item.kind === 'type' ? 2 : 0) + Math.min(s.combo - 1, 5) * 2;
+    } else {
+      s.combo = 0;
+      // Falsche Antwort in Abfragen kommt am Ende der Runde noch einmal als Schreibaufgabe
+      if (s.type === 'quiz') s.items.push({ ...item, kind: 'type', retry: true });
+    }
+  } else if (ok) {
+    pts = 4;
   }
-  s.feedback = { ok, typo: res === 'typo', given };
+  const events = gain(pts, !item.retry);
+  s.feedback = { ok, typo: res === 'typo', given, pts, events };
   render();
 }
 
@@ -542,14 +674,15 @@ function markLearned() {
   const word = currentWord();
   word.box = 1;
   word.due = today();
-  save();
-  session.i++;
-  render();
+  game().learned++;
+  gain(3);
+  nextItem();
 }
 
 function nextItem() {
   session.i++;
   session.feedback = null;
+  if (session.i >= session.items.length) finishSession();
   render();
 }
 
@@ -572,6 +705,7 @@ function renderSummary(s) {
         : '<p>Alles auf Anhieb richtig!</p>'}`;
   }
   return `<div class="card center">${body}
+      ${rewards(s)}
       <button class="primary" data-act="go" data-view="start">Zur Startseite</button>
     </div>`;
 }
@@ -624,7 +758,7 @@ async function syncCentral() {
 // ---------- Rendering und Ereignisse ----------
 function render() {
   document.querySelectorAll('nav [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-  const views = { start: viewStart, import: viewImport, weeks: viewWeeks, session: renderSession };
+  const views = { start: viewStart, import: viewImport, weeks: viewWeeks, badges: viewBadges, session: renderSession };
   $('#main').innerHTML = views[view]();
   if (view === 'session') {
     const el = document.querySelector('#answer:not([disabled]), #go');
