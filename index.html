@@ -72,6 +72,7 @@
   .combo { color: #e8801c; font-weight: 700; }
   .pop { font-size: 3rem; animation: pop .6s ease-out; }
   @keyframes pop { 0% { transform: scale(.3); opacity: 0; } 70% { transform: scale(1.25); } 100% { transform: scale(1); opacity: 1; } }
+  .clock { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
   .badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
   .badge { border: 1px solid var(--line); border-radius: 12px; padding: 12px; text-align: center; display: grid; gap: 4px; }
   .badge .icon { font-size: 2rem; }
@@ -106,6 +107,7 @@ const STAGE_NAMES = ['neu', 'Stufe 1', 'Stufe 2', 'Stufe 3', 'Stufe 4', 'sicher'
 let state = loadState();
 let view = 'start';
 let session = null;
+let clockTimer = null;
 
 function loadState() {
   try {
@@ -337,7 +339,9 @@ function viewWeeks() {
       <td>${w.box === 0 ? '–' : (w.due <= today() ? 'heute' : formatDate(w.due))}</td>
       <td>${w.wrong || 0}</td>
     </tr>`).join('');
+  const goalOpts = [10, 20, 30, 40].map(n => `<option value="${n}" ${n === dailyGoal() ? 'selected' : ''}>${n} Aufgaben</option>`).join('');
   return `<div class="card"><h2>Wochen</h2>${list}</div>
+    <div class="card"><label>Tagesmission: so viele Aufgaben pro Tag<select id="goalSel">${goalOpts}</select></label></div>
     <div class="card"><h2>${esc(aw.name)}: Details</h2>
       <div class="table-wrap"><table>
         <tr><th>Englisch</th><th>Deutsch</th><th>Stufe</th><th>Nächste Abfrage</th><th>Fehler</th></tr>
@@ -357,7 +361,7 @@ function deleteWeek(id) {
 }
 
 // ---------- Spielerische Elemente (XP, Level, Serie, Abzeichen) ----------
-const DAILY_GOAL = 20; // Fragen bzw. neue Wörter pro Tag
+const dailyGoal = () => (state.settings && state.settings.goal) || 20; // Aufgaben (Fragen bzw. neue Wörter) pro Tag
 const LEVEL_TITLES = ['Wort-Neuling', 'Vokabel-Entdecker', 'Wort-Sammler', 'Sprachtalent', 'Vokabel-Profi',
   'Wortakrobat', 'Sprachheld', 'Wortmeister', 'Vokabel-Legende'];
 const levelOf = xp => Math.floor(Math.sqrt(xp / 40)) + 1;
@@ -395,11 +399,13 @@ function gain(pts, countsForGoal = true) {
   const events = [];
   const levelBefore = levelOf(g.xp);
   g.xp += pts;
-  if (countsForGoal && ++g.dayCount === DAILY_GOAL) {
+  if (countsForGoal && ++g.dayCount === dailyGoal()) {
     g.goalsReached++;
+    g.missionDay = t;
+    g.missionTime = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     g.xp += 20;
     pts += 20;
-    events.push('🎯 Tagesziel erreicht! +20 XP');
+    events.push('🎯 Mission erledigt! +20 XP');
   }
   const lvl = levelOf(g.xp);
   if (lvl > levelBefore) events.push(`⭐ Level ${lvl}: ${titleOf(lvl)}`);
@@ -435,15 +441,18 @@ function gameCard() {
   const t = today();
   const streak = g.lastDay === t || g.lastDay === addDays(-1) ? g.streak : 0;
   const todayCount = g.lastDay === t ? g.dayCount : 0;
+  const goal = dailyGoal();
+  const missionDone = g.missionDay === t;
   return `<div class="card">
     <div class="level"><b>⭐ Level ${lvl}: ${titleOf(lvl)}</b><span class="muted">${g.xp} XP</span></div>
     <div class="bar"><span style="width:${((g.xp - from) / (to - from)) * 100}%"></span></div>
     <p class="muted">Noch ${to - g.xp} XP bis Level ${lvl + 1}</p>
     <div class="stats">
       <div><b>🔥 ${streak}</b><span>Tage in Folge</span></div>
-      <div><b>${Math.min(todayCount, DAILY_GOAL)}/${DAILY_GOAL}</b><span>Tagesziel</span></div>
+      <div><b>${Math.min(todayCount, goal)}/${goal}</b><span>Tagesmission</span></div>
       <div><b>🏅 ${g.badges.length}/${BADGES.length}</b><span>Abzeichen</span></div>
     </div>
+    ${missionDone ? '<div class="actions"><button class="primary" data-act="go" data-view="mission">✅ Mission erledigt: Nachweis für Eltern zeigen</button></div>' : ''}
   </div>`;
 }
 
@@ -453,6 +462,29 @@ function viewBadges() {
     const got = g.badges.includes(b.id);
     return `<div class="badge ${got ? '' : 'locked'}"><div class="icon">${got ? b.icon : '🔒'}</div><b>${b.name}</b><span class="muted">${b.desc}</span></div>`;
   }).join('')}</div></div>`;
+}
+
+// Nachweis für die Eltern: Die Live-Uhr mit Sekunden zeigt, dass es kein alter Screenshot ist.
+function viewMission() {
+  const g = game();
+  const goal = dailyGoal();
+  if (g.missionDay !== today()) {
+    const left = Math.max(goal - (g.lastDay === today() ? g.dayCount : 0), 0);
+    return `<div class="card center">
+      <h2>Mission noch offen</h2>
+      <p>Heute noch <b>${left}</b> Aufgaben bis zur Tagesmission.</p>
+      <button class="primary" data-act="go" data-view="start">Weiter lernen</button>
+    </div>`;
+  }
+  const lvl = levelOf(g.xp);
+  return `<div class="card center">
+    <div class="pop">✅</div>
+    <h2>Mission erledigt!</h2>
+    <p>${goal} Aufgaben heute geschafft, um ${g.missionTime} Uhr.</p>
+    <p class="xp big">Level ${lvl} · ${g.xp} XP · 🔥 ${g.streak} ${g.streak === 1 ? 'Tag' : 'Tage'}</p>
+    <p class="clock" id="clock"></p>
+    <p class="muted">Jetzt bei den Eltern zusätzliche Bildschirmzeit anfragen und diesen Bildschirm zeigen.</p>
+  </div>`;
 }
 
 function rewards(s) {
@@ -706,6 +738,7 @@ function renderSummary(s) {
   }
   return `<div class="card center">${body}
       ${rewards(s)}
+      ${game().missionDay === today() ? '<p><button class="secondary" data-act="go" data-view="mission">✅ Nachweis für Eltern zeigen</button></p>' : ''}
       <button class="primary" data-act="go" data-view="start">Zur Startseite</button>
     </div>`;
 }
@@ -758,8 +791,17 @@ async function syncCentral() {
 // ---------- Rendering und Ereignisse ----------
 function render() {
   document.querySelectorAll('nav [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-  const views = { start: viewStart, import: viewImport, weeks: viewWeeks, badges: viewBadges, session: renderSession };
+  const views = { start: viewStart, import: viewImport, weeks: viewWeeks, badges: viewBadges, mission: viewMission, session: renderSession };
   $('#main').innerHTML = views[view]();
+  clearInterval(clockTimer);
+  if (view === 'mission') {
+    const tick = () => {
+      const el = $('#clock');
+      if (el) el.textContent = new Date().toLocaleString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+    tick();
+    clockTimer = setInterval(tick, 1000);
+  }
   if (view === 'session') {
     const el = document.querySelector('#answer:not([disabled]), #go');
     if (el) el.focus();
@@ -792,6 +834,10 @@ document.addEventListener('submit', e => {
 });
 
 document.addEventListener('change', async e => {
+  if (e.target.id === 'goalSel') {
+    state.settings = { ...state.settings, goal: Number(e.target.value) };
+    save();
+  }
   if (e.target.id === 'weekSel') {
     state.activeId = e.target.value;
     save();
